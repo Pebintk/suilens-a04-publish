@@ -1,0 +1,148 @@
+services:
+  catalog-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: catalog
+      POSTGRES_PASSWORD: catalog
+      POSTGRES_DB: catalog
+    volumes:
+      - catalog_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5443:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  order-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+      POSTGRES_DB: orders
+    volumes:
+      - order_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5444:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  notification-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: notifications
+      POSTGRES_DB: notifications
+    volumes:
+      - notification_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5445:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  inventory-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory
+    volumes:
+      - inventory_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5446:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  catalog-service:
+    build: ./services/catalog-service
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgres://catalog:catalog@catalog-db:5432/catalog
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+
+  inventory-service:
+    build: ./services/inventory-service
+    ports:
+      - "3004:3004"
+    environment:
+      DATABASE_URL: postgres://inventory:inventory@inventory-db:5432/inventory
+      CATALOG_SERVICE_URL: http://catalog-service:3001
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      catalog-service:
+        condition: service_started
+
+  order-service:
+    build: ./services/order-service
+    ports:
+      - "3002:3002"
+    environment:
+      DATABASE_URL: postgres://orders:orders@order-db:5432/orders
+      CATALOG_SERVICE_URL: http://catalog-service:3001
+      INVENTORY_SERVICE_URL: http://inventory-service:3004
+      DEFAULT_BRANCH_CODE: KB-JKT-S
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      order-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      catalog-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+
+  notification-service:
+    build: ./services/notification-service
+    ports:
+      - "3003:3003"
+    environment:
+      DATABASE_URL: postgres://notifications:notifications@notification-db:5432/notifications
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend/suilens-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_CATALOG_API: http://localhost:3001
+      VITE_INVENTORY_API: http://localhost:3004
+      VITE_ORDER_API: http://localhost:3002
+      VITE_NOTIFICATION_API: http://localhost:3003
+      VITE_NOTIFICATION_WS: ws://localhost:3003/ws/notifications
+
+volumes:
+  catalog_pgdata:
+  inventory_pgdata:
+  order_pgdata:
+  notification_pgdata:
