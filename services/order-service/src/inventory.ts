@@ -8,12 +8,18 @@ interface InventoryReservationPayload {
   quantity: number;
 }
 
+interface ObservabilityHeaders {
+  requestId: string;
+  traceparent: string;
+}
+
 interface InventoryErrorResponse {
   error?: string;
 }
 
 export async function reserveInventory(
   payload: InventoryReservationPayload,
+  telemetry: ObservabilityHeaders,
 ): Promise<
   { ok: true } | { ok: false; status: 404 | 409 | 500; error: string }
 > {
@@ -21,7 +27,11 @@ export async function reserveInventory(
     `${INVENTORY_SERVICE_URL}/api/inventory/reserve`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-request-id": telemetry.requestId,
+        traceparent: telemetry.traceparent,
+      },
       body: JSON.stringify(payload),
     },
   ).catch(() => null);
@@ -49,10 +59,14 @@ export async function reserveInventory(
   };
 }
 
-export async function releaseInventory(orderId: string) {
+export async function releaseInventory(orderId: string, telemetry: ObservabilityHeaders) {
   await fetch(`${INVENTORY_SERVICE_URL}/api/inventory/release`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-request-id": telemetry.requestId,
+      traceparent: telemetry.traceparent,
+    },
     body: JSON.stringify({ orderId }),
   }).catch(() => null);
 }

@@ -5,6 +5,11 @@ const EXCHANGE_NAME = 'suilens.events';
 
 let channel: amqplib.Channel | null = null;
 
+interface EventMetadata {
+  requestId: string;
+  traceparent: string;
+}
+
 async function getChannel(): Promise<amqplib.Channel> {
   if (channel) return channel;
   const connection = await amqplib.connect(RABBITMQ_URL);
@@ -13,12 +18,17 @@ async function getChannel(): Promise<amqplib.Channel> {
   return channel;
 }
 
-export async function publishEvent(routingKey: string, payload: Record<string, any>) {
+export async function publishEvent(
+  routingKey: string,
+  payload: Record<string, unknown>,
+  metadata: EventMetadata,
+) {
   const ch = await getChannel();
   const message = JSON.stringify({
     event: routingKey,
     timestamp: new Date().toISOString(),
     data: payload,
+    meta: metadata,
   });
   ch.publish(EXCHANGE_NAME, routingKey, Buffer.from(message), {
     persistent: true,

@@ -2,11 +2,22 @@ import amqplib from "amqplib";
 import { db } from "./db";
 import { notifications } from "./db/schema";
 import { broadcastNotification } from "./realtime";
+import { endSpan, startSpan } from "./otel-native";
 
 const RABBITMQ_URL =
   process.env.RABBITMQ_URL || "amqp://guest:guest@localhost:5672";
 const EXCHANGE_NAME = "suilens.events";
 const QUEUE_NAME = "notification-service.order-events";
+
+function logEvent(payload: Record<string, unknown>) {
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: "notification-service",
+      ...payload,
+    }),
+  );
+}
 
 export async function startConsumer() {
   let retries = 0;
@@ -29,7 +40,20 @@ export async function startConsumer() {
 
         try {
           const event = JSON.parse(msg.content.toString());
-          console.log(`Received event: ${event.event}`, event.data);
+          const requestId = event?.meta?.requestId ?? "unknown";
+          const traceparent = event?.meta?.traceparent ?? "";
+          const consumeSpan = startSpan("consume_order_event", traceparent, {
+            "messaging.system": "rabbitmq",
+            "messaging.destination": QUEUE_NAME,
+            "messaging.operation": "process",
+          });
+          logEvent({
+            level: "info",
+            message: "Received event from RabbitMQ",
+            event: event.event,
+            request_id: requestId,
+            trace_id: traceparent.split("-")[1] ?? "",
+          });
 
           if (event.event === "order.placed") {
             const { orderId, customerName, customerEmail, lensName } =
@@ -68,8 +92,18 @@ export async function startConsumer() {
               });
 
               console.log(`Notification recorded for order ${orderId}`);
+              logEvent({
+                level: "info",
+                message: "Notification recorded",
+                order_id: orderId,
+                event: event.event,
+                request_id: requestId,
+                trace_id: traceparent.split("-")[1] ?? "",
+              });
             }
           }
+
+          await endSpan(consumeSpan, 1);
 
           channel.ack(msg);
         } catch (error) {
