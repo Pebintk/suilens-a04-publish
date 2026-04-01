@@ -137,6 +137,22 @@ Port default: 5173
 - DATABASE_URL
 - RABBITMQ_URL
 
+## Observability Stack (Monitoring, Logging, Tracing)
+
+Project ini sudah disiapkan untuk stack observability berbasis OpenTelemetry + Grafana:
+- Grafana: http://localhost:3000 (admin/admin)
+- Prometheus: http://localhost:9090
+- Loki API: http://localhost:3100
+- Tempo API: http://localhost:3200
+
+Jalankan seluruh stack (aplikasi + observability):
+```
+docker compose up --build
+```
+
+File konfigurasi observability berada di folder `observability/`.
+
+
 ## Endpoint
 
 ### Catalog Service (3001)
