@@ -67,7 +67,6 @@ export async function releaseInventory(orderId: string, telemetry: Observability
       "x-request-id": telemetry.requestId,
       traceparent: telemetry.traceparent,
     },
-
     body: JSON.stringify({ orderId }),
   }).catch(() => null);
 }

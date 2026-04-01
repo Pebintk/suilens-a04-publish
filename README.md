@@ -137,6 +137,10 @@ Port default: 5173
 - DATABASE_URL
 - RABBITMQ_URL
 
+<<<<<<< ours
+=======
+
+>>>>>>> theirs
 ## Observability Stack (Monitoring, Logging, Tracing)
 
 Project ini sudah disiapkan untuk stack observability berbasis OpenTelemetry + Grafana:
@@ -151,7 +155,11 @@ docker compose up --build
 ```
 
 File konfigurasi observability berada di folder `observability/`.
-
+Instrumentasi tracing native OTLP HTTP saat ini berada di:
+- `services/order-service/src/otel-native.ts`
+- `services/catalog-service/src/otel-native.ts`
+- `services/inventory-service/src/otel-native.ts`
+- `services/notification-service/src/otel-native.ts`
 
 ## Endpoint
 
@@ -173,6 +181,7 @@ File konfigurasi observability berada di folder `observability/`.
 - POST /api/orders
 - GET /api/orders
 - GET /api/orders/:id
+- GET /metrics
 - GET /docs
 - GET /health
 

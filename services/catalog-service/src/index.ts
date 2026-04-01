@@ -4,6 +4,7 @@ import { swagger } from "@elysiajs/swagger";
 import { db } from "./db";
 import { lenses } from "./db/schema";
 import { eq } from "drizzle-orm";
+import { endSpan, startSpan } from "./otel-native";
 
 const lensResponse = t.Object({
   id: t.String({ format: "uuid" }),
@@ -23,7 +24,7 @@ const errorResponse = t.Object({
 });
 
 function logEvent(payload: Record<string, unknown>) {
-    console.log(
+  console.log(
     JSON.stringify({
       timestamp: new Date().toISOString(),
       service: "catalog-service",
@@ -58,8 +59,14 @@ const app = new Elysia()
   )
   .get(
     "/api/lenses",
-    async () => {
+    async ({ request }) => {
+      const traceparent = request.headers.get("traceparent") ?? "";
+      const span = startSpan("list_lenses", traceparent, {
+        "http.method": "GET",
+        "http.route": "/api/lenses",
+      });
       const results = await db.select().from(lenses);
+      await endSpan(span, 1);
       return results.map(serializeLens);
     },
     {
@@ -78,6 +85,11 @@ const app = new Elysia()
     async ({ params, status, request }) => {
       const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
       const traceparent = request.headers.get("traceparent") ?? "";
+      const span = startSpan("get_lens_by_id", traceparent, {
+        "http.method": "GET",
+        "http.route": "/api/lenses/:id",
+        "lens.id": params.id,
+      });
       const results = await db
         .select()
         .from(lenses)
@@ -93,9 +105,10 @@ const app = new Elysia()
           message: "Lens not found",
           lens_id: params.id,
         });
-
+        await endSpan(span, 2);
         return status(404, { error: "Lens not found" });
       }
+      await endSpan(span, 1);
       return serializeLens(results[0]);
     },
     {

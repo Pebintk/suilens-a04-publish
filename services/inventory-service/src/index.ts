@@ -4,6 +4,7 @@ import { swagger } from "@elysiajs/swagger";
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { branches, inventory, reservations } from "./db/schema";
+import { endSpan, startSpan } from "./otel-native";
 
 const branchResponse = t.Object({
   code: t.String(),
@@ -50,7 +51,6 @@ function logEvent(payload: Record<string, unknown>) {
     }),
   );
 }
-
 
 const app = new Elysia()
   .use(cors())
@@ -119,6 +119,12 @@ const app = new Elysia()
     async ({ body, status, request }) => {
       const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
       const traceparent = request.headers.get("traceparent") ?? "";
+      const reserveSpan = startSpan("reserve_inventory", traceparent, {
+        "http.method": "POST",
+        "http.route": "/api/inventory/reserve",
+        "order.id": body.orderId,
+        "lens.id": body.lensId,
+      });
       const existingReservation = await db
         .select()
         .from(reservations)
@@ -135,7 +141,7 @@ const app = new Elysia()
             ),
           );
 
-        return {
+        const result = {
           success: true,
           orderId: body.orderId,
           lensId: body.lensId,
@@ -143,15 +149,18 @@ const app = new Elysia()
           quantity: body.quantity,
           availableQuantity: existingInventory[0]?.availableQuantity ?? 0,
         };
+        await endSpan(reserveSpan, 1);
+        return result;
       }
 
       if (existingReservation[0]) {
+        await endSpan(reserveSpan, 2);
         return status(409, {
           error: "Inventory reservation already exists for this order",
         });
       }
 
-      return db.transaction(async (tx) => {
+      const reservationResult = await db.transaction(async (tx) => {
         const stockRows = await tx
           .select()
           .from(inventory)
@@ -176,12 +185,12 @@ const app = new Elysia()
             lens_id: body.lensId,
             branch_code: body.branchCode,
           });
-
+          await endSpan(reserveSpan, 2);
           return status(404, { error: "Inventory record not found" });
         }
 
         if (stock.availableQuantity < body.quantity) {
-        logEvent({
+          logEvent({
             level: "warn",
             endpoint: "/api/inventory/reserve",
             method: "POST",
@@ -192,7 +201,7 @@ const app = new Elysia()
             lens_id: body.lensId,
             branch_code: body.branchCode,
           });
-
+          await endSpan(reserveSpan, 2);
           return status(409, {
             error: "Selected branch does not have enough stock",
           });
@@ -222,6 +231,8 @@ const app = new Elysia()
           availableQuantity: updatedStock?.availableQuantity ?? 0,
         };
       });
+      await endSpan(reserveSpan, 1);
+      return reservationResult;
     },
     {
       detail: {
@@ -243,11 +254,16 @@ const app = new Elysia()
   )
   .post(
     "/api/inventory/release",
-    async ({ body, request }) =>
-      db.transaction(async (tx) => {
-        const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-        const traceparent = request.headers.get("traceparent") ?? "";
+    async ({ body, request }) => {
+      const traceparent = request.headers.get("traceparent") ?? "";
+      const releaseSpan = startSpan("release_inventory", traceparent, {
+        "http.method": "POST",
+        "http.route": "/api/inventory/release",
+        "order.id": body.orderId,
+      });
 
+      const result = await db.transaction(async (tx) => {
+        const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
         const reservationRows = await tx
           .select()
           .from(reservations)
@@ -308,7 +324,11 @@ const app = new Elysia()
           orderId: body.orderId,
           released: true,
         };
-      }),
+      });
+
+      await endSpan(releaseSpan, 1);
+      return result;
+    },
     {
       detail: {
         tags: ["Inventory"],

@@ -6,6 +6,7 @@ import { orders } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { publishEvent } from "./events";
 import { releaseInventory, reserveInventory } from "./inventory";
+import { endSpan, newTraceparent, startSpan } from "./otel-native";
 
 const CATALOG_SERVICE_URL =
   process.env.CATALOG_SERVICE_URL || "http://localhost:3001";
@@ -51,12 +52,6 @@ const orderBusinessCounters = new Map<string, number>();
 
 function incMetric(map: Map<string, number>, key: string, step = 1) {
   map.set(key, (map.get(key) ?? 0) + step);
-}
-
-function newTraceparent() {
-  const traceId = crypto.randomUUID().replaceAll("-", "");
-  const spanId = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
-  return `00-${traceId}-${spanId}-01`;
 }
 
 function logEvent(payload: Record<string, unknown>) {
@@ -115,7 +110,6 @@ function renderPrometheusMetrics() {
   return `${lines.join("\n")}\n`;
 }
 
-
 function serializeOrder(order: typeof orders.$inferSelect) {
   return {
     ...order,
@@ -151,6 +145,11 @@ const app = new Elysia()
       const started = performance.now();
       const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
       const traceparent = request.headers.get("traceparent") ?? newTraceparent();
+      const createOrderSpan = startSpan("create_order", traceparent, {
+        "http.method": "POST",
+        "http.route": "/api/orders",
+        "enduser.id": body.customerEmail,
+      });
 
       const lensResponse = await fetch(
         `${CATALOG_SERVICE_URL}/api/lenses/${body.lensId}`,
@@ -160,11 +159,9 @@ const app = new Elysia()
             traceparent,
           },
         },
-
       );
       if (!lensResponse.ok) {
         const durationSeconds = (performance.now() - started) / 1000;
-
         observeHttp("/api/orders", 404, durationSeconds);
         incMetric(orderBusinessCounters, "failed");
         logEvent({
@@ -177,7 +174,7 @@ const app = new Elysia()
           message: "Lens not found while creating order",
           lens_id: body.lensId,
         });
-
+        await endSpan(createOrderSpan, 2);
         return status(404, { error: "Lens not found" });
       }
       const lens = (await lensResponse.json()) as CatalogLens;
@@ -191,7 +188,7 @@ const app = new Elysia()
         const durationSeconds = (performance.now() - started) / 1000;
         observeHttp("/api/orders", 400, durationSeconds);
         incMetric(orderBusinessCounters, "failed");
-
+        await endSpan(createOrderSpan, 2);
         return status(400, { error: "End date must be after start date" });
       }
       const totalPrice = (days * parseFloat(lens.dayPrice)).toFixed(2);
@@ -210,6 +207,7 @@ const app = new Elysia()
         const durationSeconds = (performance.now() - started) / 1000;
         observeHttp("/api/orders", reservation.status, durationSeconds);
         incMetric(orderBusinessCounters, "failed");
+        await endSpan(createOrderSpan, 2);
         return status(reservation.status, { error: reservation.error });
       }
 
@@ -237,6 +235,7 @@ const app = new Elysia()
         const durationSeconds = (performance.now() - started) / 1000;
         observeHttp("/api/orders", 500, durationSeconds);
         incMetric(orderBusinessCounters, "failed");
+        await endSpan(createOrderSpan, 2);
         return status(500, { error: "Failed to create order" });
       }
 
@@ -249,7 +248,7 @@ const app = new Elysia()
         quantity,
       }, { requestId, traceparent });
 
-       const durationSeconds = (performance.now() - started) / 1000;
+      const durationSeconds = (performance.now() - started) / 1000;
       observeHttp("/api/orders", 201, durationSeconds);
       incMetric(orderBusinessCounters, "success");
       logEvent({
@@ -264,7 +263,9 @@ const app = new Elysia()
         lens_id: body.lensId,
         branch_code: branchCode,
       });
+      await endSpan(createOrderSpan, 1);
 
+      await endSpan(createOrderSpan, 1);
       return status(201, serializeOrder(order));
     },
     {

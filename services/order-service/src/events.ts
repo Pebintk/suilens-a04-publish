@@ -10,7 +10,6 @@ interface EventMetadata {
   traceparent: string;
 }
 
-
 async function getChannel(): Promise<amqplib.Channel> {
   if (channel) return channel;
   const connection = await amqplib.connect(RABBITMQ_URL);
@@ -20,8 +19,8 @@ async function getChannel(): Promise<amqplib.Channel> {
 }
 
 export async function publishEvent(
-  routingKey: string, 
-  payload: Record<string, any>,
+  routingKey: string,
+  payload: Record<string, unknown>,
   metadata: EventMetadata,
 ) {
   const ch = await getChannel();
@@ -29,7 +28,7 @@ export async function publishEvent(
     event: routingKey,
     timestamp: new Date().toISOString(),
     data: payload,
-    meta: metadata
+    meta: metadata,
   });
   ch.publish(EXCHANGE_NAME, routingKey, Buffer.from(message), {
     persistent: true,
