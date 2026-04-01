@@ -8,6 +8,16 @@ const RABBITMQ_URL =
 const EXCHANGE_NAME = "suilens.events";
 const QUEUE_NAME = "notification-service.order-events";
 
+function logEvent(payload: Record<string, unknown>) {
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: "notification-service",
+      ...payload,
+    }),
+  );
+}
+
 export async function startConsumer() {
   let retries = 0;
   const maxRetries = 10;
@@ -29,7 +39,16 @@ export async function startConsumer() {
 
         try {
           const event = JSON.parse(msg.content.toString());
-          console.log(`Received event: ${event.event}`, event.data);
+          const requestId = event?.meta?.requestId ?? "unknown";
+          const traceparent = event?.meta?.traceparent ?? "";
+          logEvent({
+            level: "info",
+            message: "Received event from RabbitMQ",
+            event: event.event,
+            request_id: requestId,
+            trace_id: traceparent.split("-")[1] ?? "",
+          });
+
 
           if (event.event === "order.placed") {
             const { orderId, customerName, customerEmail, lensName } =
@@ -68,6 +87,15 @@ export async function startConsumer() {
               });
 
               console.log(`Notification recorded for order ${orderId}`);
+              logEvent({
+                level: "info",
+                message: "Notification recorded",
+                order_id: orderId,
+                event: event.event,
+                request_id: requestId,
+                trace_id: traceparent.split("-")[1] ?? "",
+              });
+
             }
           }
 

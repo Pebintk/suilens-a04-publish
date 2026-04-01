@@ -41,6 +41,17 @@ const errorResponse = t.Object({
   error: t.String(),
 });
 
+function logEvent(payload: Record<string, unknown>) {
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: "inventory-service",
+      ...payload,
+    }),
+  );
+}
+
+
 const app = new Elysia()
   .use(cors())
   .use(
@@ -105,7 +116,9 @@ const app = new Elysia()
   )
   .post(
     "/api/inventory/reserve",
-    async ({ body, status }) => {
+    async ({ body, status, request }) => {
+      const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+      const traceparent = request.headers.get("traceparent") ?? "";
       const existingReservation = await db
         .select()
         .from(reservations)
@@ -152,10 +165,34 @@ const app = new Elysia()
         const stock = stockRows[0];
 
         if (!stock) {
+          logEvent({
+            level: "warn",
+            endpoint: "/api/inventory/reserve",
+            method: "POST",
+            status_code: 404,
+            request_id: requestId,
+            trace_id: traceparent.split("-")[1] ?? "",
+            message: "Inventory record not found",
+            lens_id: body.lensId,
+            branch_code: body.branchCode,
+          });
+
           return status(404, { error: "Inventory record not found" });
         }
 
         if (stock.availableQuantity < body.quantity) {
+        logEvent({
+            level: "warn",
+            endpoint: "/api/inventory/reserve",
+            method: "POST",
+            status_code: 409,
+            request_id: requestId,
+            trace_id: traceparent.split("-")[1] ?? "",
+            message: "Not enough stock",
+            lens_id: body.lensId,
+            branch_code: body.branchCode,
+          });
+
           return status(409, {
             error: "Selected branch does not have enough stock",
           });
@@ -206,8 +243,11 @@ const app = new Elysia()
   )
   .post(
     "/api/inventory/release",
-    async ({ body }) =>
+    async ({ body, request }) =>
       db.transaction(async (tx) => {
+        const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+        const traceparent = request.headers.get("traceparent") ?? "";
+
         const reservationRows = await tx
           .select()
           .from(reservations)
@@ -251,6 +291,17 @@ const app = new Elysia()
             releasedAt: new Date(),
           })
           .where(eq(reservations.id, reservation.id));
+
+        logEvent({
+          level: "info",
+          endpoint: "/api/inventory/release",
+          method: "POST",
+          status_code: 200,
+          request_id: requestId,
+          trace_id: traceparent.split("-")[1] ?? "",
+          message: "Reservation released",
+          order_id: body.orderId,
+        });
 
         return {
           success: true,

@@ -22,6 +22,16 @@ const errorResponse = t.Object({
   error: t.String(),
 });
 
+function logEvent(payload: Record<string, unknown>) {
+    console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      service: "catalog-service",
+      ...payload,
+    }),
+  );
+}
+
 function serializeLens(lens: typeof lenses.$inferSelect) {
   return {
     ...lens,
@@ -65,12 +75,25 @@ const app = new Elysia()
   )
   .get(
     "/api/lenses/:id",
-    async ({ params, status }) => {
+    async ({ params, status, request }) => {
+      const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+      const traceparent = request.headers.get("traceparent") ?? "";
       const results = await db
         .select()
         .from(lenses)
         .where(eq(lenses.id, params.id));
       if (!results[0]) {
+        logEvent({
+          level: "warn",
+          endpoint: "/api/lenses/:id",
+          method: "GET",
+          status_code: 404,
+          request_id: requestId,
+          trace_id: traceparent.split("-")[1] ?? "",
+          message: "Lens not found",
+          lens_id: params.id,
+        });
+
         return status(404, { error: "Lens not found" });
       }
       return serializeLens(results[0]);
